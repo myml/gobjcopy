@@ -166,7 +166,7 @@ haveFile:
 	} else if outTgt.IsBinary {
 		out, err = ToBinary(f, cfg)
 	} else {
-		if err := applyFormat(f, outTgt); err != nil {
+		if err := applyFormat(f, outTgt, cfg); err != nil {
 			return err
 		}
 		out, err = f.Bytes()
@@ -191,6 +191,14 @@ func Transform(f *elf.File, cfg *Config) error {
 	if cfg == nil {
 		cfg = Default()
 	}
+	// GNU decides --prefix-alloc-sections from the input flags and creates
+	// added sections after section naming. Snapshot both facts before any
+	// step mutates the section table.
+	cfg.syntheticSections = nil
+	cfg.inputAlloc = make(map[*elf.Section]bool, len(f.Sections))
+	for _, s := range f.Sections {
+		cfg.inputAlloc[s] = s.Flags&elf.SHF_ALLOC != 0
+	}
 	steps := []func(*elf.File, *Config) error{
 		applySectionStrip,
 		applyOnlyKeepDebug,
@@ -205,8 +213,11 @@ func Transform(f *elf.File, cfg *Config) error {
 		applySymbols,
 		applyDebugLink,
 		applyCompression,
+		applySectionPrefixes,
+		applyExtractSymbol,
 		applyGapFill,
 		applyPadTo,
+		applyAltMachineCode,
 	}
 	for _, step := range steps {
 		if err := step(f, cfg); err != nil {
@@ -254,7 +265,7 @@ func outputTarget(cfg *Config, f *elf.File) (*bfdtarget.Target, error) {
 	return bfdtarget.Parse(name)
 }
 
-func applyFormat(f *elf.File, t *bfdtarget.Target) error {
+func applyFormat(f *elf.File, t *bfdtarget.Target, cfg *Config) error {
 	if t.Class != f.Class {
 		if convertClass != nil {
 			return convertClass(f, t.Class)
@@ -277,7 +288,9 @@ func applyFormat(f *elf.File, t *bfdtarget.Target) error {
 	if t.Data != f.Data {
 		return fmt.Errorf("cannot convert %s to %s", f.Data, t.Data)
 	}
-	if t.Machine != 0 {
+	// --alt-machine-code is applied at the very end in GNU, after the output
+	// target has been selected, so it wins over the target's architecture.
+	if t.Machine != 0 && (cfg == nil || cfg.AltMachineCode == 0) {
 		f.Machine = t.Machine
 	}
 	return nil
@@ -383,6 +396,7 @@ func fileDigest(f *elf.File) [32]byte {
 	}
 	put(uint64(f.Class))
 	put(uint64(f.Data))
+	put(uint64(f.Machine))
 	put(f.Entry)
 	put(uint64(len(f.Sections)))
 	put(uint64(f.Shstrndx))

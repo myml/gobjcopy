@@ -411,12 +411,33 @@ func (c *Config) updateSectionTarget(f *elf.File, name string) *elf.Section {
 // -R/-j may refer to the new names (GNU renames while copying, but the
 // observable result is the same).
 func applyRenamesEarly(f *elf.File, c *Config) error {
+	renamed := map[*elf.Section]bool{}
 	for _, r := range c.Renames {
 		sec := f.Section(r.Old)
 		if sec == nil {
 			continue
 		}
 		sec.Name = r.New
+		renamed[sec] = true
+	}
+	// BFD emits a relocation section under "<.rela|.rel><target output name>",
+	// so renaming .text to .mytext also renames .rela.text to .rela.mytext.
+	for _, s := range f.Sections {
+		if s.Type != elf.SHT_REL && s.Type != elf.SHT_RELA {
+			continue
+		}
+		if int(s.Info) <= 0 || int(s.Info) >= len(f.Sections) {
+			continue
+		}
+		target := f.Sections[s.Info]
+		if !renamed[target] {
+			continue
+		}
+		if s.Type == elf.SHT_RELA {
+			s.Name = ".rela" + target.Name
+		} else {
+			s.Name = ".rel" + target.Name
+		}
 	}
 	return nil
 }
@@ -451,6 +472,107 @@ func setSectionFlags(f *elf.File, sec *elf.Section, spec string) error {
 	return nil
 }
 
+// isBookkeepingSection reports whether the section is one of the tables BFD
+// creates itself rather than copying from the input. --prefix-sections and
+// --extract-symbol leave those alone (.symtab/.strtab/.shstrtab stay intact),
+// while copied tables such as .dynsym/.dynstr/.gnu.hash are prefixed and
+// cleared like any other input section.
+func isBookkeepingSection(f *elf.File, idx int, s *elf.Section) bool {
+	switch s.Type {
+	case elf.SHT_SYMTAB, elf.SHT_SYMTAB_SHNDX:
+		return true
+	case elf.SHT_STRTAB:
+		if idx == f.Shstrndx || s.Name == ".shstrtab" || s.Name == ".strtab" {
+			return true
+		}
+	}
+	if st := f.SectionByType(elf.SHT_SYMTAB); st != nil && int(st.Link) == idx {
+		return true
+	}
+	return false
+}
+
+// applySectionPrefixes implements --prefix-sections and
+// --prefix-alloc-sections. GNU applies the prefix in setup_section after
+// --rename-section and after every option that matches input section names,
+// and relocation section names are rebuilt from the (prefixed) target name,
+// which is why ".rela.text" becomes ".relafoo_.text" rather than
+// "foo_.rela.text".
+func applySectionPrefixes(f *elf.File, c *Config) error {
+	if c.PrefixSections == "" && c.PrefixAllocSections == "" {
+		return nil
+	}
+	prefixed := map[*elf.Section]bool{}
+	for i, s := range f.Sections {
+		if i == 0 || c.isSynthetic(s) || isBookkeepingSection(f, i, s) {
+			continue
+		}
+		prefix := c.PrefixSections
+		if c.PrefixAllocSections != "" && c.wasAlloc(s) {
+			prefix = c.PrefixAllocSections
+		}
+		if prefix == "" {
+			continue
+		}
+		s.Name = prefix + s.Name
+		prefixed[s] = true
+	}
+	// BFD rebuilds a relocation section's name from its target's output name:
+	// ".rela.text" whose .text became "foo_.text" is emitted as
+	// ".relafoo_.text", with no extra dot, for both SHT_REL and SHT_RELA.
+	for _, s := range f.Sections {
+		if s.Type != elf.SHT_REL && s.Type != elf.SHT_RELA {
+			continue
+		}
+		if int(s.Info) <= 0 || int(s.Info) >= len(f.Sections) {
+			continue
+		}
+		target := f.Sections[s.Info]
+		if !prefixed[target] {
+			continue
+		}
+		if s.Type == elf.SHT_RELA {
+			s.Name = ".rela" + target.Name
+		} else {
+			s.Name = ".rel" + target.Name
+		}
+	}
+	return nil
+}
+
+// applyExtractSymbol implements --extract-symbol: every copied section loses
+// its contents and size while its type, flags and address survive, and the
+// entry point becomes zero. The symbol table is kept untouched (GNU only runs
+// filter_symbols when another symbol option asks for it), so all shndx
+// references stay valid. Sections objcopy created itself (--add-section,
+// --add-gnu-debuglink) and the ELF bookkeeping tables are not touched.
+func applyExtractSymbol(f *elf.File, c *Config) error {
+	if !c.ExtractSymbol {
+		return nil
+	}
+	f.Entry = 0
+	for i, s := range f.Sections {
+		if i == 0 || c.isSynthetic(s) || isBookkeepingSection(f, i, s) {
+			continue
+		}
+		s.Data = nil
+		s.Size = 0
+	}
+	return nil
+}
+
+// applyAltMachineCode implements --alt-machine-code. ELF BFD targets have no
+// alternative machine table, so GNU warns twice and writes the number as the
+// absolute e_machine value.
+func applyAltMachineCode(f *elf.File, c *Config) error {
+	if c.AltMachineCode == 0 {
+		return nil
+	}
+	c.warnf("this target does not support %d alternative machine codes", c.AltMachineCode)
+	c.warnf("treating that number as an absolute e_machine value instead")
+	f.Machine = uint16(c.AltMachineCode)
+	return nil
+}
 func applySectionFlags(f *elf.File, c *Config) error {
 	for _, sf := range c.SetSectionFlags {
 		found := false
@@ -534,6 +656,7 @@ func applyAddUpdateSections(f *elf.File, c *Config) error {
 		if err := f.AddSection(sec); err != nil {
 			return err
 		}
+		c.markSynthetic(sec)
 		if c.Verbose {
 			c.infof("added section %s", as.Name)
 		}

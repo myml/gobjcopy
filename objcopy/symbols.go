@@ -172,7 +172,10 @@ func applySymbols(f *elf.File, c *Config) error {
 	}
 
 	// --add-symbol: append the new symbols before filtering so that they take
-	// part in the usual local-before-global ordering.
+	// part in the usual local-before-global ordering. GNU injects them in
+	// filter_symbols before the redefinition and prefix steps, so those steps
+	// never touch added symbols.
+	inputCount := len(entries)
 	for _, as := range c.AddSymbols {
 		sym := elf.Symbol{Name: as.Name, Value: as.Value, Info: as.Type | as.Bind<<4}
 		if as.Section == "" {
@@ -236,13 +239,27 @@ func applySymbols(f *elf.File, c *Config) error {
 			}
 			return name
 		}
-		for i := 1; i < len(entries); i++ {
+		for i := 1; i < inputCount; i++ {
 			renamed := redef(names[i])
 			names[i] = renamed
 			// BFD writes local section symbols without a name, so the new
 			// name only matters for the name based filters below.
 			if entries[i].Type() != elf.STT_SECTION {
 				entries[i].Name = renamed
+			}
+		}
+	}
+
+	// --prefix-symbols runs after --redefine-sym and before the strip
+	// decisions, exactly like filter_symbols. BFD also prefixes the name it
+	// derives for an unnamed section symbol, which is why -N .text stops
+	// matching once a symbol prefix is in use while the symbol's displayed
+	// name still comes from its (possibly section-prefixed) section.
+	if c.PrefixSymbols != "" {
+		for i := 1; i < inputCount; i++ {
+			names[i] = c.PrefixSymbols + names[i]
+			if entries[i].Type() != elf.STT_SECTION {
+				entries[i].Name = names[i]
 			}
 		}
 	}

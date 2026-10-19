@@ -56,6 +56,7 @@ func applyDebugLink(f *elf.File, c *Config) error {
 	if err := f.AddSection(sec); err != nil {
 		return err
 	}
+	c.markSynthetic(sec)
 	if c.Verbose {
 		c.infof("added .gnu_debuglink for %s (crc %#08x)", name, DebugLinkCRC(data))
 	}

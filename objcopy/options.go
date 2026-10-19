@@ -140,6 +140,39 @@ type Config struct {
 	RemoveRelocations   []string
 	StripSectionHeaders bool
 
+	// Section name prefixes (--prefix-sections, --prefix-alloc-sections).
+	// PrefixSections applies to every copied section; PrefixAllocSections
+	// overrides it for sections that were SHF_ALLOC in the input. GNU applies
+	// them after --rename-section and after every name based selection, and
+	// rebuilds relocation section names from their target's new name.
+	PrefixSections      string
+	PrefixAllocSections string
+
+	// PrefixSymbols is --prefix-symbols: prepend it to every named symbol
+	// after --redefine-sym and before stripping decisions. Unnamed section
+	// symbols keep their name (readelf displays the section's name).
+	PrefixSymbols string
+
+	// ExtractSymbol is --extract-symbol: keep the ELF skeleton (sections,
+	// flags, addresses, symbol table) but drop all section contents, sizes and
+	// the entry point, like GNU's VxWorks symbol-only output.
+	ExtractSymbol bool
+
+	// AltMachineCode is --alt-machine-code. Zero means unset; ELF has no
+	// alternative machine table, so a non-zero value produces GNU's two
+	// warnings and is stored as an absolute e_machine (truncated to 16 bits,
+	// matching the on-disk field).
+	AltMachineCode uint64
+
+	// syntheticSections records sections that objcopy itself created
+	// (--add-section, --add-gnu-debuglink). GNU creates those after section
+	// naming, so --prefix-sections and --extract-symbol leave them alone.
+	syntheticSections map[*elf.Section]bool
+	// inputAlloc saves each input section's SHF_ALLOC bit. GNU chooses
+	// --prefix-alloc-sections from the input flags, before
+	// --set-section-flags or --rename-section replace them.
+	inputAlloc map[*elf.Section]bool
+
 	// Addresses and layout.
 	SetStart             *uint64
 	ChangeStart          *int64
@@ -172,6 +205,28 @@ type Config struct {
 // Default returns a Config with GNU defaults.
 func Default() *Config {
 	return &Config{InterleaveWidth: 1, Byte: -1}
+}
+
+// markSynthetic records a section created by objcopy rather than copied from
+// the input.
+func (c *Config) markSynthetic(s *elf.Section) {
+	if c.syntheticSections == nil {
+		c.syntheticSections = map[*elf.Section]bool{}
+	}
+	c.syntheticSections[s] = true
+}
+
+// isSynthetic reports whether objcopy created the section itself.
+func (c *Config) isSynthetic(s *elf.Section) bool {
+	return c.syntheticSections[s]
+}
+
+// wasAlloc reports whether the section was SHF_ALLOC in the input image.
+func (c *Config) wasAlloc(s *elf.Section) bool {
+	if v, ok := c.inputAlloc[s]; ok {
+		return v
+	}
+	return s.Flags&elf.SHF_ALLOC != 0
 }
 
 // Validate checks option combinations the same way GNU objcopy does.

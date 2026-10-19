@@ -23,7 +23,7 @@
 | `-F --target` | bfdname | 否 | 同时设 I/O |
 | `-B --binary-architecture` | arch | 否 | 仅对无架构输入（binary/ihex…）有效；对 ELF 输入只警告 `Input file `x' ignores binary architecture parameter.`；合法名仅 `i386`/`iamcu`（`x86-64` 报 unknown） |
 | `--info` | – | – | 打印 BFD 目标/架构矩阵，exit 0 |
-| `--alt-machine-code` | index | 否 | 选目标机 index（ELF 上基本 no-op） |
+| `--alt-machine-code` | index | 否 | `strtoul(...,0)`；0 → fatal `unable to parse alternative machine code`。ELF 目标没有 alternative 表：两条 warning（`this target does not support %lu alternative machine codes`、`treating that number as an absolute e_machine value instead`），随后 `e_machine = N`（16 位截断） |
 | `--long-section-names` | enable/disable/keep | 否 | 仅 COFF |
 | `--change-leading-char` / `--remove-leading-char` | – | – | 符号前导字符（ELF 无前导字符 → no-op，rc=0） |
 
@@ -65,7 +65,11 @@
 ### 1.6 内容变换与其它
 `-i --interleave[=N]`、`--interleave-width N`、`-b --byte N`、`--reverse-bytes=N`、
 `--redefine-sym OLD=NEW`、`--redefine-syms FILE`、`--add-symbol NAME=[SECT:]VAL[,FLAGS]`、
-`--prefix-symbols`、`--prefix-sections`、`--prefix-alloc-sections`、
+`--prefix-symbols`（在 `--redefine-sym` 之后、strip 判定之前加前缀；SECTION 符号显示名仍来自节名）、
+`--prefix-sections` / `--prefix-alloc-sections`（在 `--rename-section` 之后，alloc 分类用**输入** flags；
+重定位节按目标输出名重构：`.rela.text` → `.relafoo_.text`；`.symtab/.strtab/.shstrtab` 与
+`--add-section` 创建的节不加前缀）、`--extract-symbol`（所有拷贝节 size=0、内容清空，`e_entry=0`，
+符号表原样保留）、
 `--elf-stt-common=yes|no`、`--compress-debug-sections[=none|zlib|zlib-gnu|zlib-gabi|zstd]`、
 `--decompress-debug-sections`、`--verilog-data-width`、`--srec-len`、`--srec-forceS3`；
 PE 专用（ELF 上 no-op、rc=0）：`--file-alignment --heap --image-base --section-alignment --stack

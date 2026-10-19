@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -433,6 +434,29 @@ func applyOption(pa *parsedArgs, action, arg string, useGlobalize, useKeepGlobal
 	case "strip-section-headers":
 		cfg.StripSectionHeaders = true
 
+	case "prefix-sections":
+		cfg.PrefixSections = arg
+	case "prefix-alloc-sections":
+		cfg.PrefixAllocSections = arg
+	case "prefix-symbols":
+		cfg.PrefixSymbols = arg
+	case "extract-symbol":
+		cfg.ExtractSymbol = true
+	case "alt-machine-code":
+		// GNU: use_alt_mach_code = strtoul (optarg, NULL, 0); a zero result
+		// (including an unparsable argument) is a fatal option error.
+		v := parseCULong(arg)
+		if v == 0 {
+			return fmt.Errorf("unable to parse alternative machine code")
+		}
+		cfg.AltMachineCode = v
+	case "change-leading-char", "remove-leading-char":
+		// ELF has no symbol leading character (bfd_get_symbol_leading_char
+		// returns 0), so both options are no-ops for every ELF target:
+		// filter_symbols' rem_leading_char condition never becomes true and
+		// add_leading_char requires a non-zero output leading char. They stay
+		// parsed for GNU command-line compatibility.
+
 	case "rename-section":
 		rename, err := parseRenameSection(arg)
 		if err != nil {
@@ -593,13 +617,9 @@ func applyOption(pa *parsedArgs, action, arg string, useGlobalize, useKeepGlobal
 
 	default:
 		// Options that are parsed for GNU command-line compatibility but do
-		// not change the output yet.  Everything objcopy.exp exercises is
-		// implemented; what remains needs a PE/COFF backend or is rarely
+		// not change the output: they need a PE/COFF backend or are rarely
 		// used on ELF:
 		//
-		//   --extract-symbol, --prefix-symbols, --prefix-sections,
-		//   --prefix-alloc-sections, --change-leading-char,
-		//   --remove-leading-char, --add-leading-char, --alt-machine-code,
 		//   --long-section-names, --file-alignment, --heap, --image-base,
 		//   --section-alignment, --stack, --subsystem, --writable-text,
 		//   --readonly-text, --pure, --impure.
@@ -790,6 +810,69 @@ func parseCInt(s string) int {
 		i++
 	}
 	return sign * n
+}
+
+// parseCULong reproduces C's strtoul(s, NULL, 0): leading whitespace, an
+// optional sign, then digits in base 16 (0x/0X prefix), base 8 (leading 0) or
+// base 10. Parsing stops at the first character that is not a digit, so
+// "40xyz" is 40 and "abc" is 0. A negative value wraps around like unsigned
+// arithmetic, and an overflowing conversion returns ULONG_MAX.
+func parseCULong(s string) uint64 {
+	i := 0
+	for i < len(s) && strings.ContainsRune(" \t\n\r\f\v", rune(s[i])) {
+		i++
+	}
+	negative := false
+	if i < len(s) && (s[i] == '+' || s[i] == '-') {
+		negative = s[i] == '-'
+		i++
+	}
+	base := uint64(10)
+	if i < len(s) && s[i] == '0' {
+		base = 8
+		i++
+		if i < len(s) && (s[i] == 'x' || s[i] == 'X') {
+			base = 16
+			i++
+		}
+	}
+	start := i
+	var v uint64
+	overflow := false
+	for i < len(s) {
+		d := cDigit(s[i])
+		if d < 0 || uint64(d) >= base {
+			break
+		}
+		if v > (math.MaxUint64-uint64(d))/base {
+			overflow = true
+		}
+		v = v*base + uint64(d)
+		i++
+	}
+	if i == start {
+		v = 0
+	}
+	if overflow {
+		return math.MaxUint64
+	}
+	if negative {
+		v = ^v + 1
+	}
+	return v
+}
+
+// cDigit returns the value of an ASCII digit or -1.
+func cDigit(c byte) int {
+	switch {
+	case c >= '0' && c <= '9':
+		return int(c - '0')
+	case c >= 'a' && c <= 'f':
+		return int(c-'a') + 10
+	case c >= 'A' && c <= 'F':
+		return int(c-'A') + 10
+	}
+	return -1
 }
 
 // readSymbolList reads a file for --strip-symbols and friends: one symbol name

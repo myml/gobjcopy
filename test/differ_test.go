@@ -323,6 +323,98 @@ var differentialCases = []testCase{
 	},
 
 	// ---------------------------------------------------------------------
+	// Section/symbol prefixes, symbol-only extraction, alternate machine code
+	// ---------------------------------------------------------------------
+	{
+		name:   "prefix-sections",
+		inputs: []string{"reloc.o"},
+		args:   []string{"--prefix-sections", "foo_"},
+		note:   "relocation sections follow their target: .rela.text -> .relafoo_.text",
+	},
+	{
+		name:   "prefix-alloc-sections",
+		inputs: []string{"reloc.o"},
+		args:   []string{"--prefix-alloc-sections", "al_"},
+	},
+	{
+		name:   "prefix-sections-both",
+		inputs: []string{"reloc.o"},
+		args:   []string{"--prefix-sections", "foo_", "--prefix-alloc-sections", "al_"},
+	},
+	{
+		name:   "rename-section-with-relocs",
+		inputs: []string{"reloc.o"},
+		args:   []string{"--rename-section", ".text=.mytext"},
+		note:   "BFD renames .rela.text to .rela.mytext as well",
+	},
+	{
+		name:   "prefix-sections-with-rename",
+		inputs: []string{"reloc.o"},
+		args:   []string{"--prefix-sections", "foo_", "--rename-section", ".text=.mytext"},
+	},
+	{
+		name:   "prefix-sections-with-prefix-symbols",
+		inputs: []string{"reloc.o"},
+		args:   []string{"--prefix-sections", "foo_", "--prefix-symbols", "bar_"},
+	},
+	{
+		name:   "prefix-symbols",
+		inputs: []string{"reloc.o", "hello-nopie", "lib.so"},
+		args:   []string{"--prefix-symbols", "bar_"},
+	},
+	{
+		name:   "prefix-symbols-section-symbol",
+		inputs: []string{"reloc.o"},
+		args:   []string{"--prefix-symbols", "bar_", "-N", ".text"},
+		note:   "the prefix is applied to the section symbol's derived name, so -N .text no longer matches",
+	},
+	{
+		name:        "prefix-symbols-section-symbol-fatal",
+		inputs:      []string{"reloc.o"},
+		args:        []string{"--prefix-symbols", "bar_", "-N", "bar_.text"},
+		looseStderr: true,
+	},
+	{
+		name:   "prefix-symbols-with-redefine",
+		inputs: []string{"reloc.o"},
+		args:   []string{"--prefix-symbols", "bar_", "--redefine-sym", "func_a=func_z"},
+	},
+	{
+		name:   "prefix-symbols-with-add-symbol",
+		inputs: []string{"reloc.o"},
+		args:   []string{"--prefix-symbols", "bar_", "--add-symbol", "NEW=0x1234"},
+		note:   "GNU inserts --add-symbol symbols before the prefix step, so NEW stays unprefixed",
+	},
+	{
+		name:   "extract-symbol",
+		inputs: []string{"reloc.o", "hello-nopie", "hello-pie", "hello", "lib.so"},
+		args:   []string{"--extract-symbol"},
+	},
+	{
+		name:   "extract-symbol-with-prefixes",
+		inputs: []string{"reloc.o"},
+		args:   []string{"--extract-symbol", "--prefix-sections", "foo_", "--prefix-symbols", "bar_"},
+	},
+	{
+		name:   "alt-machine-code",
+		inputs: []string{"reloc.o", "hello-nopie"},
+		args:   []string{"--alt-machine-code", "40"},
+		note:   "two warnings on stderr are checked by the CLI tests; the result carries e_machine=40",
+	},
+	{
+		name:   "change-leading-char",
+		inputs: []string{"reloc.o", "hello-nopie"},
+		args:   []string{"--change-leading-char"},
+		note:   "ELF has no symbol leading character, so this is a no-op",
+	},
+	{
+		name:   "remove-leading-char",
+		inputs: []string{"reloc.o", "hello-nopie"},
+		args:   []string{"--remove-leading-char"},
+		note:   "ELF has no symbol leading character, so this is a no-op",
+	},
+
+	// ---------------------------------------------------------------------
 	// Addresses, padding and filling
 	// ---------------------------------------------------------------------
 	{

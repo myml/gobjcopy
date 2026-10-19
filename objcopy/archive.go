@@ -144,7 +144,7 @@ func archiveMemberBytes(f *elf.File, cfg *Config) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err := applyFormat(f, t); err != nil {
+		if err := applyFormat(f, t, cfg); err != nil {
 			return nil, err
 		}
 	}

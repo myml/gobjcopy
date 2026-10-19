@@ -67,13 +67,13 @@ err = objcopy.Run(cfg, "in", "out")
 
 | 类别 | 支持情况 |
 | --- | --- |
-| 节 | `-R`/`-j`/`--keep-section`（含 `!` 否定与通配符）、`--rename-section`、`--set-section-flags`、`--set-section-alignment`、`--add-section`、`--update-section`、`--dump-section`、`--remove-relocations`、`--strip-section-headers` |
-| 符号 | `-S`、`-g`、`--strip-unneeded`、`-x`、`-X`、`-K`、`-N`、`-G`、`-L`、`--globalize-symbol`、`-W`、`--weaken`、`--redefine-sym(s)`、`-w`、`--keep-file-symbols`、`--keep-section-symbols`、`--localize-hidden`、`--add-symbol`、`--elf-stt-common` |
+| 节 | `-R`/`-j`/`--keep-section`（含 `!` 否定与通配符）、`--rename-section`、`--prefix-sections`、`--prefix-alloc-sections`、`--set-section-flags`、`--set-section-alignment`、`--add-section`、`--update-section`、`--dump-section`、`--remove-relocations`、`--strip-section-headers` |
+| 符号 | `-S`、`-g`、`--strip-unneeded`、`-x`、`-X`、`-K`、`-N`、`-G`、`-L`、`--globalize-symbol`、`-W`、`--weaken`、`--redefine-sym(s)`、`-w`、`--keep-file-symbols`、`--keep-section-symbols`、`--localize-hidden`、`--add-symbol`、`--elf-stt-common`、`--prefix-symbols`、`--extract-symbol` |
 | 调试 | `--only-keep-debug`、`--add-gnu-debuglink`、`--compress-debug-sections=zlib/zlib-gabi/zlib-gnu`、`--decompress-debug-sections`、`--strip-dwo`、`--extract-dwo`、`-M/--merge-notes` |
 | 地址/布局 | `--change-addresses`、`--adjust-vma`、`--change-section-address/vma/lma`、`--set-start`、`--change-start`、`--gap-fill`、`--pad-to`、`--reverse-bytes`、`--interleave/--byte/--interleave-width` |
 | 格式 | `-O binary/ihex/srec/verilog`、`-I binary/ihex/srec`、`-I/-O/-F elf{32,64}-*`、`-B`、`--info`、`--srec-len`、`--srec-forceS3`、`--verilog-data-width`、ELF32↔ELF64 类转换（x32） |
 | 归档 | `.a` 读写、成员逐个变换、符号索引重建、`-D/-U` 确定性归档 |
-| 其他 | `-p`、`-v`、`--version`、原地修改、权限位复制；warning 不影响退出码 |
+| 其他 | `-p`、`-v`、`--version`、`--alt-machine-code`、原地修改、权限位复制；warning 不影响退出码。`--change-leading-char`/`--remove-leading-char` 在 ELF 上是 no-op（BFD 的前导字符为 0） |
 
 `-O binary`、`-I binary`、`--strip-section-headers` 的输出与 GNU **逐字节一致**。
 
@@ -176,18 +176,18 @@ scripts/coverage.sh                 # 全仓按文件统计（-coverpkg=./...）
 go test ./... -cover               # 各包自身覆盖率
 ```
 
-当前总覆盖率 **94.4%（4226/4475 statements）**。主要模块：
+当前总覆盖率 **94.5%（4345/4600 statements）**。主要模块：
 
 | 文件 | 覆盖率 | 文件 | 覆盖率 |
 | --- | ---: | --- | ---: |
 | `elf/names.go`、`elf/types.go` | 100% | `elf/convert.go` | 99.4% |
 | `internal/elfdump`、`internal/getopt` | 100% | `elf/reader.go` / `writer.go` | 99.3 / 99.1% |
-| `cmd/gobjcopy/options.go` | 100% | `objcopy/notes.go` | 99.2% |
+| `cmd/gobjcopy/options.go` | 99.8% | `objcopy/notes.go` | 99.2% |
 | `internal/ar` | 97.9% | `objcopy/contents.go` | 97.8% |
 | `objcopy/archive.go` | 97.5% | `objcopy/compress.go` | 97.3% |
 | `objcopy/debuglink.go` | 96.2% | `elf/note.go` | 95.4% |
-| `objcopy/sections.go` | 94.6% | `objcopy/symbols.go` | 86.9% |
-| `objcopy/run.go` | 89.6% | `objcopy/format_srec.go` | 84.8% |
+| `objcopy/sections.go` | 94.5% | `objcopy/symbols.go` | 87.1% |
+| `objcopy/run.go` | 89.8% | `objcopy/format_srec.go` | 84.8% |
 
 未覆盖的主要是不可达的防御分支（如 `Write`/`Close` 的 zlib 错误、`runtime.GOARCH`
 其它架构的 switch 分支、`Bytes` 永不失败的错误返回）以及 ASCII 格式的少数错误路径。
@@ -196,8 +196,7 @@ go test ./... -cover               # 各包自身覆盖率
 
 1. **未实现的格式**：PE/COFF、Mach-O、symbolsrec、tekhex。
    对应的 PE 专用选项（`--file-alignment/--heap/--image-base/--section-alignment/--stack/--subsystem/--writable-text/--readonly-text/--pure/--impure`）
-   以及 `--extract-symbol`、`--prefix-*`、`--*-leading-char`、`--alt-machine-code`、
-   `--long-section-names` 仍然只解析、不生效。
+   以及 COFF 的 `--long-section-names` 仍然只解析、不生效。
 2. **类转换仅支持 ET_REL**：ET_EXEC/ET_DYN 会明确报错（GOT、`init_array`、
    代码里内嵌的地址无法安全重排）。
 3. **程序头重建策略不同**：GNU 在重排时可能丢弃 `PT_GNU_RELRO`，或把被删节对应的段
@@ -205,17 +204,27 @@ go test ./... -cover               # 各包自身覆盖率
    段内数据一致，差分测试只比较 LOAD 段。
 4. **`--rename-section` 同时替换 flags** 时，GNU 2.44 会把节内容清零（疑似 bug），
    gobjcopy 保留内容。
-5. **字符串表布局**：GNU 的 `_bfd_elf_strtab` 后缀合并更激进，`.strtab/.shstrtab`
+5. **在可执行文件/共享库上给节加前缀**时，GNU 会把它自己生成的节的 `sh_link` 清成 0
+   （`.dynsym`→`.dynstr`、`.gnu.hash`→`.dynsym`、`.dynamic`→`.dynstr` 等），
+   readelf 随即报 `Link field (0) should index ...`；gobjcopy 保留仍然有效的链接。
+   节名、大小、flags 与 GNU 一致。
+6. **`--extract-symbol` 与 `-S` 组合**：GNU 的 `skip_section` 使 `-S` 不删除空的
+   `.rela.*` 节（`sh_link=0`），gobjcopy 按 `-S` 语义把它们删掉。单独使用
+   `--extract-symbol`（含 `.o`/ET_EXEC/ET_DYN）各项一致。
+7. **`--prefix-sections` 与 `--compress-debug-sections=zlib-gnu` 组合**：GNU 压缩后
+   保留 `foo_.debug_info` 这样的名字（因为改名逻辑只认 `.debug` 前缀），gobjcopy
+   输出 `foo_.zdebug_info`。压缩字节差异见上一节，二者都不参与差分比较。
+8. **字符串表布局**：GNU 的 `_bfd_elf_strtab` 后缀合并更激进，`.strtab/.shstrtab`
    通常比我们小几字节；符号名与索引语义一致。
-6. **`-j` 在可重定位文件上**：GNU 2.44 会因子符号表为空而致命失败，gobjcopy 会丢弃
+9. **`-j` 在可重定位文件上**：GNU 2.44 会因子符号表为空而致命失败，gobjcopy 会丢弃
    失效重定位并成功输出。
-7. 非 x86 目标使用简化 target 名（`elf64-aarch64` 而非 `elf64-littleaarch64`），
-   但 `--info` 列出的名字都能解析回来。
-8. 大端 ELF 的写出路径已实现，但测试环境没有大端样本，未做真机验证。
-9. **`-R` 删掉可重定位文件里被重定位引用的节**：GNU 会以
-   `symbol '.debug_info' required but not present` 致命退出；gobjcopy 在
-   `elf.RemoveSection` 里已把引用被删符号的重定位一并丢弃，因此能成功输出。
-10. **手工构造的 x86 可执行文件做无操作复制**：如果输入里带未使用的 section
+10. 非 x86 目标使用简化 target 名（`elf64-aarch64` 而非 `elf64-littleaarch64`），
+    但 `--info` 列出的名字都能解析回来。
+11. 大端 ELF 的写出路径已实现，但测试环境没有大端样本，未做真机验证。
+12. **`-R` 删掉可重定位文件里被重定位引用的节**：GNU 会以
+    `symbol '.debug_info' required but not present` 致命退出；gobjcopy 在
+    `elf.RemoveSection` 里已把引用被删符号的重定位一并丢弃，因此能成功输出。
+13. **手工构造的 x86 可执行文件做无操作复制**：如果输入里带未使用的 section
     符号，GNU 会重写文件并丢弃它们；gobjcopy 的“无变化就逐字节复制”捷径会原样
     保留。官方 `objcopy.exp` 的 `cmp` 用例不受影响（ld 生成的可执行文件没有这类
     符号）。
@@ -235,7 +244,7 @@ scripts/binutils-objcopy-tests.sh full             # 整个 binutils testsuite
   以及 convert/names/note 等模块的表驱动测试。
 - **objcopy 对拍**：35+ 个变换分别经 GNU 与库执行，用 `internal/elfdump` 比较
   节/符号/重定位/内容的语义等价；二进制输出逐字节比较。
-- **CLI 差分**：`test/` 下 51 个用例、76 个子测试，比较退出码、错误文本、输出文件；
+- **CLI 差分**：`test/` 下 65 个用例、99 个 fixture 子测试，比较退出码、错误文本、输出文件；
   脚手架可将被测程序换成 `/usr/bin/objcopy` 自检。
 - **官方套件**：直接替换 binutils 构建目录里的 `objcopy`，用 DejaGnu 跑 `objcopy.exp`。
 - **GNU 行为依据**：`docs/gnu-objcopy-behavior.md` 记录了 binutils 2.44 源码

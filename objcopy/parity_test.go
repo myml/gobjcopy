@@ -189,6 +189,80 @@ func cases() []parityCase {
 			c.StripSectionHeaders = true
 			return c
 		}, false, ""},
+		{"prefix-sections", "reloc.o", []string{"--prefix-sections", "foo_"}, func() *objcopy.Config {
+			c := objcopy.Default()
+			c.PrefixSections = "foo_"
+			return c
+		}, false, ""},
+		{"prefix-alloc-sections", "reloc.o", []string{"--prefix-alloc-sections", "al_"}, func() *objcopy.Config {
+			c := objcopy.Default()
+			c.PrefixAllocSections = "al_"
+			return c
+		}, false, ""},
+		{"prefix-sections-both", "reloc.o", []string{"--prefix-sections", "foo_", "--prefix-alloc-sections", "al_"}, func() *objcopy.Config {
+			c := objcopy.Default()
+			c.PrefixSections = "foo_"
+			c.PrefixAllocSections = "al_"
+			return c
+		}, false, ""},
+		{"prefix-sections-with-rename", "reloc.o", []string{"--prefix-sections", "foo_", "--rename-section", ".text=.mytext"}, func() *objcopy.Config {
+			c := objcopy.Default()
+			c.PrefixSections = "foo_"
+			c.Renames = []objcopy.Rename{{Old: ".text", New: ".mytext"}}
+			return c
+		}, false, ""},
+		{"prefix-symbols", "reloc.o", []string{"--prefix-symbols", "bar_"}, func() *objcopy.Config {
+			c := objcopy.Default()
+			c.PrefixSymbols = "bar_"
+			return c
+		}, false, ""},
+		{"prefix-symbols-exe", "hello", []string{"--prefix-symbols", "bar_"}, func() *objcopy.Config {
+			c := objcopy.Default()
+			c.PrefixSymbols = "bar_"
+			return c
+		}, false, ""},
+		{"prefix-symbols-both", "reloc.o", []string{"--prefix-sections", "foo_", "--prefix-symbols", "bar_"}, func() *objcopy.Config {
+			c := objcopy.Default()
+			c.PrefixSections = "foo_"
+			c.PrefixSymbols = "bar_"
+			return c
+		}, false, ""},
+		{"prefix-symbols-with-add-symbol", "reloc.o", []string{"--prefix-symbols", "bar_", "--add-symbol", "NEW=0x1234"}, func() *objcopy.Config {
+			c := objcopy.Default()
+			c.PrefixSymbols = "bar_"
+			c.AddSymbols = []objcopy.AddSymbol{{Name: "NEW", Value: 0x1234, Bind: 1}}
+			return c
+		}, false, ""},
+		{"extract-symbol-obj", "reloc.o", []string{"--extract-symbol"}, func() *objcopy.Config {
+			c := objcopy.Default()
+			c.ExtractSymbol = true
+			return c
+		}, false, ""},
+		{"extract-symbol-exe", "hello-nopie", []string{"--extract-symbol"}, func() *objcopy.Config {
+			c := objcopy.Default()
+			c.ExtractSymbol = true
+			return c
+		}, false, ""},
+		{"extract-symbol-pie", "hello-pie", []string{"--extract-symbol"}, func() *objcopy.Config {
+			c := objcopy.Default()
+			c.ExtractSymbol = true
+			return c
+		}, false, ""},
+		{"extract-symbol-shared", "lib.so", []string{"--extract-symbol"}, func() *objcopy.Config {
+			c := objcopy.Default()
+			c.ExtractSymbol = true
+			return c
+		}, false, ""},
+		{"alt-machine-code", "reloc.o", []string{"--alt-machine-code", "40"}, func() *objcopy.Config {
+			c := objcopy.Default()
+			c.AltMachineCode = 40
+			return c
+		}, false, ""},
+		{"alt-machine-code-exe", "hello-nopie", []string{"--alt-machine-code", "40"}, func() *objcopy.Config {
+			c := objcopy.Default()
+			c.AltMachineCode = 40
+			return c
+		}, false, ""},
 	}
 }
 
