@@ -405,12 +405,12 @@ const (
 // ok is false when the section is not a well formed property note section, in
 // which case it is left untouched.
 func decodePropertyNotes(sec *Section, class Class, order binary.ByteOrder) ([]gnuProperty, bool) {
-	align := int(sec.Addralign)
-	if align != 4 && align != 8 {
-		align = 4
-		if class == Class64 {
-			align = 8
-		}
+	// BFD parses property notes with the class word size, not with the
+	// section's sh_addralign: GNU's x32 conversion keeps sh_addralign 8 while
+	// packing the descriptors on 4-byte boundaries.
+	align := 4
+	if class == Class64 {
+		align = 8
 	}
 	data := sec.Data
 	var props []gnuProperty
@@ -552,7 +552,12 @@ func encodePropertyNote(sec *Section, props []gnuProperty, class Class, order bi
 	}
 	sec.Data = buf
 	sec.Size = uint64(len(buf))
-	sec.Addralign = uint64(outAlign)
+	// BFD preserves sh_addralign across class conversion (an x32 note keeps
+	// the 8-byte alignment it had in the 64-bit input); only the descriptor
+	// layout follows the output class.
+	if sec.Addralign == 0 {
+		sec.Addralign = uint64(outAlign)
+	}
 }
 
 func alignInt(v, a int) int {

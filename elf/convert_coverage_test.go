@@ -778,8 +778,10 @@ func TestConvertCoveragePropertyRoundTrip(t *testing.T) {
 	if got := order.Uint32(sec.Data[4:]); got != 2*12 {
 		t.Errorf("ELF32 descsz = %d, want 24", got)
 	}
-	if sec.Addralign != 4 {
-		t.Errorf("ELF32 alignment = %d", sec.Addralign)
+	// BFD preserves the input section alignment; only the descriptor layout
+	// follows the class word.
+	if sec.Addralign != 8 {
+		t.Errorf("ELF32 alignment = %d, want 8", sec.Addralign)
 	}
 	if err := f.ConvertClass(Class64); err != nil {
 		t.Fatalf("convert back: %v", err)

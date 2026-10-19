@@ -111,6 +111,10 @@ func Build(dir string) (map[string]string, error) {
 	run("hello-gz", helloC, "-O1", "-g", "-gz=zlib")
 	run("hello-32", helloC, "-O1", "-g", "-m32")
 	run("reloc.o", relocC, "-O1", "-g", "-c")
+	// Some distributions (Ubuntu) enable -fcf-protection by default, which
+	// adds .note.gnu.property to every object.  Build one explicitly so the
+	// note handling paths are exercised everywhere.
+	run("reloc-cfp.o", relocC, "-O1", "-g", "-c", "-fcf-protection=full")
 	run("reloc32.o", relocC, "-O1", "-g", "-m32", "-c")
 	run("lib.so", libC, "-O1", "-g", "-shared", "-fPIC")
 	run("custom", asmS, customMain, "-O1", "-g", "-no-pie", "-fno-pie")

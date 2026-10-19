@@ -207,6 +207,21 @@ func ignoreClassWidths(s *convSnapshot) {
 	}
 }
 
+// ignoreNoteLayouts drops the layout of GNU property notes.  Their size and
+// internal alignment legitimately follow the class word (x32 packs the
+// descriptors on 4-byte boundaries), and whether the host compiler emits one
+// at all depends on its default -fcf-protection setting.
+func ignoreNoteLayouts(s *convSnapshot) {
+	for i := range s.Sections {
+		sec := &s.Sections[i]
+		if sec.Type == elf.SHT_NOTE && sec.Name == ".note.gnu.property" {
+			sec.Size = 0
+			sec.Addralign = 0
+			sec.Data = ""
+		}
+	}
+}
+
 func compareSnapshots(t *testing.T, want, got convSnapshot) {
 	t.Helper()
 	if want.Type != got.Type || want.Machine != got.Machine || want.Flags != got.Flags || want.Entry != got.Entry {
@@ -303,8 +318,10 @@ func TestClassConvertRoundTrip(t *testing.T) {
 			}
 			midSnap := takeSnapshot(t, midFile)
 			ignoreClassWidths(&midSnap)
+			ignoreNoteLayouts(&midSnap)
 			interWant := want
 			ignoreClassWidths(&interWant)
+			ignoreNoteLayouts(&interWant)
 			// Section sizes of debug data are unchanged, but the symbol
 			// table and relocation table sizes shrink or grow with the
 			// class; ignoreClassWidths already zeroed those.
@@ -329,6 +346,7 @@ func TestClassConvertRun(t *testing.T) {
 	}
 	want := takeSnapshot(t, orig)
 	ignoreClassWidths(&want)
+	ignoreNoteLayouts(&want)
 
 	for _, tc := range []struct {
 		target string
@@ -356,6 +374,7 @@ func TestClassConvertRun(t *testing.T) {
 			}
 			snap := takeSnapshot(t, f)
 			ignoreClassWidths(&snap)
+			ignoreNoteLayouts(&snap)
 			compareSnapshots(t, want, snap)
 
 			classConvReadelfParses(t, readelf, out, tc.class)
@@ -658,8 +677,10 @@ func TestClassConvertGNUPropertyNote(t *testing.T) {
 		t.Fatalf("convert to ELF32: %v", err)
 	}
 	sec := f.Sections[1]
-	if sec.Addralign != 4 {
-		t.Errorf("ELF32 property note alignment = %d, want 4", sec.Addralign)
+	// BFD keeps the input section alignment; only the descriptor layout
+	// follows the class word (GNU x32 output is 28 bytes with align 8).
+	if sec.Addralign != 8 {
+		t.Errorf("ELF32 property note alignment = %d, want 8", sec.Addralign)
 	}
 	if got, want := parseGNUProps(t, sec.Data, 4), []gnuProp{
 		{0xc0000001, 1}, {0xc0000002, 4},
@@ -782,8 +803,8 @@ func TestClassConvertGNUPropertyMerge(t *testing.T) {
 	if got := parseGNUProps(t, sec.Data, 4); !reflect.DeepEqual(got, want) {
 		t.Errorf("ELF32 properties = %+v, want %+v", got, want)
 	}
-	if sec.Addralign != 4 {
-		t.Errorf("ELF32 alignment = %d, want 4", sec.Addralign)
+	if sec.Addralign != 8 {
+		t.Errorf("ELF32 alignment = %d, want 8", sec.Addralign)
 	}
 	if wantSize := uint64(16 + 3*12); sec.Size != wantSize {
 		t.Errorf("ELF32 note size = %d, want %d", sec.Size, wantSize)
@@ -858,5 +879,112 @@ func TestClassConvertRejectsNonRelocatable(t *testing.T) {
 	f.Type = elf.ET_DYN
 	if err := f.ConvertClass(elf.Class32); err == nil {
 		t.Fatal("ConvertClass succeeded on ET_DYN input")
+	}
+}
+
+// findNote returns the .note.gnu.property section, or nil.
+func findNote(t *testing.T, f *elf.File) *elf.Section {
+	t.Helper()
+	for _, sec := range f.Sections {
+		if sec.Name == ".note.gnu.property" && sec.Type == elf.SHT_NOTE {
+			return sec
+		}
+	}
+	return nil
+}
+
+// TestClassConvertPropertyNote pins the exact layout BFD uses when converting
+// an object that carries a GNU property note: the x32 form packs the
+// descriptor on 4-byte boundaries but keeps sh_addralign 8, and converting
+// back restores the original 64-bit encoding.
+func TestClassConvertPropertyNote(t *testing.T) {
+	fx := classConvFixtures(t)
+	path := classConvFixture(t, fx, "reloc-cfp.o")
+
+	orig, err := elf.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	origNote := findNote(t, orig)
+	if origNote == nil {
+		t.Skip("host compiler did not emit .note.gnu.property")
+	}
+	if origNote.Size != 32 || origNote.Addralign != 8 {
+		t.Fatalf("unexpected input note: size=%d align=%d", origNote.Size, origNote.Addralign)
+	}
+	origData := []byte(origNote.Data)
+
+	f, err := elf.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.ConvertClass(elf.Class32); err != nil {
+		t.Fatalf("convert to 32: %v", err)
+	}
+	midNote := findNote(t, f)
+	if midNote == nil {
+		t.Fatal("property note disappeared")
+	}
+	wantX32 := []byte{
+		0x04, 0, 0, 0, 0x0c, 0, 0, 0, 0x05, 0, 0, 0,
+		'G', 'N', 'U', 0,
+		0x02, 0, 0, 0xc0, 0x04, 0, 0, 0, 0x03, 0, 0, 0,
+	}
+	if midNote.Size != 28 {
+		t.Errorf("x32 note size = %d, want 28", midNote.Size)
+	}
+	if midNote.Addralign != 8 {
+		t.Errorf("x32 note alignment = %d, want 8 (BFD preserves the input alignment)", midNote.Addralign)
+	}
+	if got := []byte(midNote.Data); !bytes.Equal(got, wantX32) {
+		t.Errorf("x32 note data = %x, want %x", got, wantX32)
+	}
+
+	mid, err := f.Bytes()
+	if err != nil {
+		t.Fatalf("serialise x32: %v", err)
+	}
+	g, err := elf.Parse(mid)
+	if err != nil {
+		t.Fatalf("reparse x32: %v", err)
+	}
+	if err := g.ConvertClass(elf.Class64); err != nil {
+		t.Fatalf("convert back: %v", err)
+	}
+	backNote := findNote(t, g)
+	if backNote == nil {
+		t.Fatal("property note disappeared on the way back")
+	}
+	if backNote.Size != 32 || backNote.Addralign != 8 {
+		t.Errorf("round-tripped note size/align = %d/%d, want 32/8", backNote.Size, backNote.Addralign)
+	}
+	if got := []byte(backNote.Data); !bytes.Equal(got, origData) {
+		t.Errorf("round-tripped note data = %x, want %x", got, origData)
+	}
+
+	// Compare the x32 form with GNU objcopy when it is available.
+	gnu, err := exec.LookPath("objcopy")
+	if err != nil {
+		t.Log("objcopy not found; skipping GNU parity check")
+		return
+	}
+	out := filepath.Join(t.TempDir(), "gnu32.o")
+	cmd := exec.Command(gnu, "-O", "elf32-x86-64", path, out)
+	if b, err := cmd.CombinedOutput(); err != nil {
+		t.Skipf("GNU objcopy cannot convert this object: %v\n%s", err, b)
+	}
+	ref, err := elf.Open(out)
+	if err != nil {
+		t.Fatalf("parse GNU output: %v", err)
+	}
+	refNote := findNote(t, ref)
+	if refNote == nil {
+		t.Fatal("GNU output lost the property note")
+	}
+	if refNote.Size != midNote.Size || refNote.Addralign != midNote.Addralign ||
+		!bytes.Equal([]byte(refNote.Data), []byte(midNote.Data)) {
+		t.Errorf("x32 note differs from GNU: GNU size/align/data %d/%d/%x, ours %d/%d/%x",
+			refNote.Size, refNote.Addralign, []byte(refNote.Data),
+			midNote.Size, midNote.Addralign, []byte(midNote.Data))
 	}
 }
