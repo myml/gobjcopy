@@ -1,5 +1,7 @@
 # gobjcopy
 
+[![CI](https://github.com/myml/gobjcopy/actions/workflows/ci.yml/badge.svg)](https://github.com/myml/gobjcopy/actions/workflows/ci.yml)
+
 纯 Go 实现的 objcopy 工具链，不依赖 cgo、不依赖任何第三方库。
 
 项目分三层，依赖方向严格单向：
@@ -228,6 +230,21 @@ go test ./... -cover               # 各包自身覆盖率
     符号，GNU 会重写文件并丢弃它们；gobjcopy 的“无变化就逐字节复制”捷径会原样
     保留。官方 `objcopy.exp` 的 `cmp` 用例不受影响（ld 生成的可执行文件没有这类
     符号）。
+
+## 持续集成
+
+`.github/workflows/ci.yml` 在每次 push / PR 时跑三组任务：
+
+- **go test**：`gofmt` 检查、`go vet`、`go test ./...`、构建、覆盖率统计（artifact 上传）。
+- **objcopy.exp**：矩阵跑 x86_64、aarch64-linux-gnu、loongarch64-linux-gnu —— 从源码构建
+  binutils 2.44（`--disable-gdb --disable-gprofng --disable-nls`），再用
+  `scripts/binutils-objcopy-tests.sh` 把 gobjcopy 换进去跑官方 `objcopy.exp`。
+- **full binutils suite**：只在手动触发且勾选 `full` 时运行，允许 4 个已知的 zlib
+  字节级失败，出现其它失败即红。
+
+工作流需要从 `ftp.gnu.org` 下载 binutils 源码（30 MB 左右，用 `actions/cache` 缓存），
+交叉任务会用 apt 安装 `gcc-aarch64-linux-gnu` / `gcc-loongarch64-linux-gnu` 编译
+可执行样例；发行版没有对应包时那些用例会记为 UNTESTED，不影响 0 FAIL 的结论。
 
 ## 测试
 

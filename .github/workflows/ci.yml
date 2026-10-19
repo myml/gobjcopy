@@ -1,0 +1,163 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      full:
+        description: "Also run the whole binutils testsuite on x86_64 (4 expected zlib failures)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  BINUTILS_VERSION: "2.44"
+
+jobs:
+  test:
+    name: go test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gofmt
+        run: |
+          out=$(gofmt -l elf objcopy cmd internal test)
+          if [ -n "$out" ]; then echo "$out"; exit 1; fi
+      - name: go vet
+        run: go vet ./...
+      - name: go test
+        run: go test ./... -count=1
+      - name: build
+        run: go build -o gobjcopy ./cmd/gobjcopy
+      - name: coverage
+        run: ./scripts/coverage.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: /tmp/gobjcopy-cover.out
+          if-no-files-found: ignore
+
+  objcopy-exp:
+    name: objcopy.exp (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x86_64-linux-gnu
+            target: ""
+          - name: aarch64-linux-gnu
+            target: aarch64-linux-gnu
+          - name: loongarch64-linux-gnu
+            target: loongarch64-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install build and testsuite dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bison flex dejagnu expect tcl curl xz-utils
+          case "${{ matrix.target }}" in
+            aarch64-linux-gnu)
+              sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu || true
+              ;;
+            loongarch64-linux-gnu)
+              sudo apt-get install -y --no-install-recommends gcc-loongarch64-linux-gnu \
+                || sudo apt-get install -y --no-install-recommends gcc-14-loongarch64-linux-gnu \
+                || true
+              ;;
+          esac
+      - name: Cache binutils tarball
+        uses: actions/cache@v4
+        with:
+          path: /tmp/binutils.tar.xz
+          key: binutils-${{ env.BINUTILS_VERSION }}
+      - name: Build binutils
+        run: |
+          set -eux
+          BINUTILS_VERSION="$BINUTILS_VERSION"
+          if [ ! -f /tmp/binutils.tar.xz ]; then
+            curl -fL --retry 5 --retry-delay 5 -o /tmp/binutils.tar.xz \
+              "https://ftp.gnu.org/gnu/binutils/binutils-$BINUTILS_VERSION.tar.xz"
+          fi
+          rm -rf /tmp/binutils-src /tmp/bu-build
+          mkdir -p /tmp/binutils-src
+          tar -xJf /tmp/binutils.tar.xz -C /tmp/binutils-src --strip-components=1
+          target_flag=""
+          if [ -n "${{ matrix.target }}" ]; then
+            target_flag="--target=${{ matrix.target }}"
+          fi
+          mkdir -p /tmp/bu-build
+          cd /tmp/bu-build
+          /tmp/binutils-src/configure $target_flag \
+            --disable-gdb --disable-gprofng --disable-nls --disable-werror --disable-sim
+          make -j"$(nproc)" all-binutils all-gas all-ld
+      - name: Run objcopy.exp
+        run: |
+          if [ -n "${{ matrix.target }}" ]; then
+            ./scripts/binutils-objcopy-tests.sh \
+              --target "${{ matrix.target }}" --build-dir /tmp/bu-build
+          else
+            ./scripts/binutils-objcopy-tests.sh --build-dir /tmp/bu-build
+          fi
+
+  binutils-full:
+    name: full binutils suite (x86_64)
+    if: github.event_name == 'workflow_dispatch' && inputs.full
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install build and testsuite dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bison flex dejagnu expect tcl curl xz-utils
+      - name: Cache binutils tarball
+        uses: actions/cache@v4
+        with:
+          path: /tmp/binutils.tar.xz
+          key: binutils-${{ env.BINUTILS_VERSION }}
+      - name: Build binutils
+        run: |
+          set -eux
+          BINUTILS_VERSION="$BINUTILS_VERSION"
+          if [ ! -f /tmp/binutils.tar.xz ]; then
+            curl -fL --retry 5 --retry-delay 5 -o /tmp/binutils.tar.xz \
+              "https://ftp.gnu.org/gnu/binutils/binutils-$BINUTILS_VERSION.tar.xz"
+          fi
+          rm -rf /tmp/binutils-src /tmp/bu-build
+          mkdir -p /tmp/binutils-src
+          tar -xJf /tmp/binutils.tar.xz -C /tmp/binutils-src --strip-components=1
+          mkdir -p /tmp/bu-build
+          cd /tmp/bu-build
+          /tmp/binutils-src/configure --disable-gdb --disable-gprofng --disable-nls --disable-werror --disable-sim
+          make -j"$(nproc)" all-binutils all-gas all-ld
+      - name: Run full testsuite, allowing the four known zlib failures
+        run: |
+          set +e
+          ./scripts/binutils-objcopy-tests.sh full --build-dir /tmp/bu-build | tee /tmp/full.log
+          status=${PIPESTATUS[0]}
+          set -e
+          unexpected=$(grep '^  - ' /tmp/full.log | grep -v 'compress debug sections' || true)
+          if [ -n "$unexpected" ]; then
+            echo "unexpected failures:"; echo "$unexpected"; exit 1
+          fi
+          known=$(grep -c '^  - ' /tmp/full.log || true)
+          echo "known zlib failures: ${known:-0} (expected 4)"
+          test "${known:-0}" -eq 4
