@@ -95,6 +95,39 @@ objcopy.exp     115 PASS / 0 FAIL / 2 unsupported     ← 与 GNU 自身的 115 
 
 仅剩的 4 个 FAIL 全部来自 `compress.exp`，原因见下一节；它们不在 `objcopy.exp` 内。
 
+### 交叉目标（aarch64 / loongarch64）
+
+同一套官方 testsuite 也可以跑交叉 binutils。先准备一个 `configure --target=...`
+并执行过 `make all-binutils all-gas all-ld` 的构建目录，再用 `--target` 指定三元组、
+`--build-dir` 指定该目录：
+
+```bash
+scripts/binutils-objcopy-tests.sh --target aarch64-linux-gnu --build-dir /tmp/bu-arm64
+scripts/binutils-objcopy-tests.sh --target loongarch64-linux-gnu --build-dir /tmp/bu-la64
+```
+
+脚本会构建当前 gobjcopy、替换构建目录里的 `binutils/objcopy`、执行
+`make check-binutils RUNTESTFLAGS="objcopy.exp"`，并输出 PASS/FAIL 计数、失败列表
+和日志路径；多次运行之间用 flock 串行化。binutils 的 testsuite 用
+`<target>-cc` / `<target>-gcc` 编译可执行样例，而发行版可能只装了带版本号的名字
+（例如 Debian 只有 `loongarch64-linux-gnu-gcc-13`），脚本会自动在 `PATH` 前插入
+只含符号链接的目录补齐这两个名字，因此 executable 用例不会被记成 UNTESTED。
+
+实测（binutils 2.44，0 FAIL）：
+
+```
+aarch64-linux-gnu        110 PASS / 0 FAIL / 5 unsupported（另 1 个 XFAIL）
+loongarch64-linux-gnu    111 PASS / 0 FAIL / 5 unsupported
+```
+
+`test/crossarch_test.go` 在两种交叉 gcc 与交叉 objcopy 都在 `PATH` 上时，用
+hello.c 构造 PIE、非 PIE 和 `.o`，逐项做交叉差分：copy、`-S`、`-g`、
+`--only-keep-debug`、`-K`、`--strip-unneeded`、`-j .text`、`-R .comment`、
+`--add-symbol`、`--change-section-address .text+0x10`、`--strip-section-headers`、
+`-O binary`。ELF 结果用 `internal/elfdump.Default` 比较节/符号/重定位/内容
+（忽略文件偏移与程序头布局，`-O binary` 逐字节比较）；compress 类操作因 zlib
+字节差异不参与比较。工具链缺失时该测试自动 skip。
+
 ## 为什么 compress.exp 里有 4 个 zlib 用例过不了
 
 这 4 个用例是：
@@ -143,7 +176,7 @@ scripts/coverage.sh                 # 全仓按文件统计（-coverpkg=./...）
 go test ./... -cover               # 各包自身覆盖率
 ```
 
-当前总覆盖率 **94.5%（4155/4396 statements）**。主要模块：
+当前总覆盖率 **94.4%（4226/4475 statements）**。主要模块：
 
 | 文件 | 覆盖率 | 文件 | 覆盖率 |
 | --- | ---: | --- | ---: |
@@ -153,8 +186,8 @@ go test ./... -cover               # 各包自身覆盖率
 | `internal/ar` | 97.9% | `objcopy/contents.go` | 97.8% |
 | `objcopy/archive.go` | 97.5% | `objcopy/compress.go` | 97.3% |
 | `objcopy/debuglink.go` | 96.2% | `elf/note.go` | 95.4% |
-| `objcopy/sections.go` | 94.6% | `objcopy/symbols.go` | 86.3% |
-| `objcopy/run.go` | 87.4% | `objcopy/format_srec.go` | 84.8% |
+| `objcopy/sections.go` | 94.6% | `objcopy/symbols.go` | 86.9% |
+| `objcopy/run.go` | 89.6% | `objcopy/format_srec.go` | 84.8% |
 
 未覆盖的主要是不可达的防御分支（如 `Write`/`Close` 的 zlib 错误、`runtime.GOARCH`
 其它架构的 switch 分支、`Bytes` 永不失败的错误返回）以及 ASCII 格式的少数错误路径。
@@ -179,6 +212,13 @@ go test ./... -cover               # 各包自身覆盖率
 7. 非 x86 目标使用简化 target 名（`elf64-aarch64` 而非 `elf64-littleaarch64`），
    但 `--info` 列出的名字都能解析回来。
 8. 大端 ELF 的写出路径已实现，但测试环境没有大端样本，未做真机验证。
+9. **`-R` 删掉可重定位文件里被重定位引用的节**：GNU 会以
+   `symbol '.debug_info' required but not present` 致命退出；gobjcopy 在
+   `elf.RemoveSection` 里已把引用被删符号的重定位一并丢弃，因此能成功输出。
+10. **手工构造的 x86 可执行文件做无操作复制**：如果输入里带未使用的 section
+    符号，GNU 会重写文件并丢弃它们；gobjcopy 的“无变化就逐字节复制”捷径会原样
+    保留。官方 `objcopy.exp` 的 `cmp` 用例不受影响（ld 生成的可执行文件没有这类
+    符号）。
 
 ## 测试
 

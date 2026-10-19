@@ -367,7 +367,11 @@ func TestApplySymbolsLocalizeHiddenInjected(t *testing.T) {
 }
 
 func TestApplySymbolsKeepFileAndSectionSymbols(t *testing.T) {
-	f := applyOn(t, "reloc.o", func(c *Config) {
+	// --keep-section-symbols only regenerates section symbols for
+	// non-relocatable outputs (GNU objcopy.c marks the output sections before
+	// filtering); on a relocatable object it has no effect. Use an executable
+	// fixture so both rescues are observable.
+	f := applyOn(t, "hello", func(c *Config) {
 		c.StripAll = true
 		c.KeepFileSymbols = true
 		c.KeepSectionSymbols = true

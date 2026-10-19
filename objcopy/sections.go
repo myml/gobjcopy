@@ -602,13 +602,41 @@ func addDelta(v uint64, d int64) uint64 {
 	return v - uint64(-d)
 }
 
+// sectionAlignForVMA reproduces the sh_addralign BFD writes for an output
+// section with VMA addr and pre-change alignment align.  bfd/elf.c computes
+// it while emitting the section header as the lowest set bit of
+// (1 << alignment_power) | sh_addr, i.e. the largest power of two that divides
+// the new VMA but never exceeds the original alignment.  A zero VMA keeps the
+// original alignment, and a zero alignment behaves like one byte.
+func sectionAlignForVMA(align, addr uint64) uint64 {
+	pow := align & -align // BFD stores only the lowest set bit as the exponent
+	if pow == 0 {
+		pow = 1
+	}
+	mask := addr | pow
+	return mask & -mask
+}
+
 func applyAddressChanges(f *elf.File, c *Config) error {
 	deltas := map[*elf.Section]int64{}
+	// The alignment BFD uses for the reduction is the one the section had
+	// before any address option ran; watching the mutated Addralign would let
+	// repeated --change-section-* options compound the reduction.  Only
+	// sections whose VMA was actually set by an option are candidates.
+	baseAlign := map[*elf.Section]uint64{}
+	movedVMA := map[*elf.Section]bool{}
+	noteVMAChange := func(sec *elf.Section) {
+		if _, ok := baseAlign[sec]; !ok {
+			baseAlign[sec] = sec.Addralign
+		}
+		movedVMA[sec] = true
+	}
 	shift := func(sec *elf.Section, d int64) {
 		if d == 0 {
 			return
 		}
 		old := sec.Addr
+		noteVMAChange(sec)
 		sec.Addr = addDelta(sec.Addr, d)
 		deltas[sec] += int64(sec.Addr) - int64(old)
 	}
@@ -657,6 +685,7 @@ func applyAddressChanges(f *elf.File, c *Config) error {
 					curLMA = *s.LMA
 				}
 				if vma {
+					noteVMAChange(s)
 					var nv uint64
 					switch ch.Op {
 					case AddrSet:
@@ -696,6 +725,16 @@ func applyAddressChanges(f *elf.File, c *Config) error {
 	}
 	if err := apply(c.ChangeSectionLMA, false, true); err != nil {
 		return err
+	}
+	// GNU lowers sh_addralign on the sections whose VMA these options moved:
+	// the alignment must divide the new address, otherwise consuming tools may
+	// reject the output.  LMA-only changes leave the alignment alone because
+	// BFD computes it from sh_addr.
+	for sec := range movedVMA {
+		if f.SectionIndex(sec) <= 0 {
+			continue
+		}
+		sec.Addralign = sectionAlignForVMA(baseAlign[sec], sec.Addr)
 	}
 	if f.Type != elf.ET_REL {
 		adjustSymbolValues(f, deltas)
