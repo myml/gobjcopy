@@ -778,10 +778,8 @@ func TestConvertCoveragePropertyRoundTrip(t *testing.T) {
 	if got := order.Uint32(sec.Data[4:]); got != 2*12 {
 		t.Errorf("ELF32 descsz = %d, want 24", got)
 	}
-	// BFD preserves the input section alignment; only the descriptor layout
-	// follows the class word.
-	if sec.Addralign != 8 {
-		t.Errorf("ELF32 alignment = %d, want 8", sec.Addralign)
+	if sec.Addralign != 4 {
+		t.Errorf("ELF32 alignment = %d, want 4", sec.Addralign)
 	}
 	if err := f.ConvertClass(Class64); err != nil {
 		t.Fatalf("convert back: %v", err)
@@ -828,19 +826,19 @@ func TestConvertCoveragePropertyMalformed(t *testing.T) {
 	order := DataLSB.Order()
 
 	// Too short for a note header.
-	if _, ok := decodePropertyNotes(&Section{SectionHeader: SectionHeader{Name: ".note.gnu.property"}, Data: make([]byte, 11)}, Class64, order); ok {
+	if _, _, ok := decodePropertyNotes(&Section{SectionHeader: SectionHeader{Name: ".note.gnu.property"}, Data: make([]byte, 11)}, Class64, order); ok {
 		t.Error("short note accepted")
 	}
 	// namesz larger than the data.
 	b := cvNote(order, 8, cvPropEntry(order, 8, 0xc0010002, 1))
 	order.PutUint32(b[0:], 0xffff)
-	if _, ok := decodePropertyNotes(&Section{SectionHeader: SectionHeader{Name: ".n"}, Data: b}, Class64, order); ok {
+	if _, _, ok := decodePropertyNotes(&Section{SectionHeader: SectionHeader{Name: ".n"}, Data: b}, Class64, order); ok {
 		t.Error("oversized namesz accepted")
 	}
 	// descsz larger than the data.
 	b = cvNote(order, 8, cvPropEntry(order, 8, 0xc0010002, 1))
 	order.PutUint32(b[4:], 0xffff)
-	if _, ok := decodePropertyNotes(&Section{SectionHeader: SectionHeader{Name: ".n"}, Data: b}, Class64, order); ok {
+	if _, _, ok := decodePropertyNotes(&Section{SectionHeader: SectionHeader{Name: ".n"}, Data: b}, Class64, order); ok {
 		t.Error("oversized descsz accepted")
 	}
 	// Non-property note.
@@ -849,7 +847,7 @@ func TestConvertCoveragePropertyMalformed(t *testing.T) {
 	order.PutUint32(b[4:], 0)
 	order.PutUint32(b[8:], 1) // NT_GNU_ABI_TAG
 	copy(b[12:], "GNU\x00")
-	if _, ok := decodePropertyNotes(&Section{SectionHeader: SectionHeader{Name: ".n"}, Data: b}, Class64, order); ok {
+	if _, _, ok := decodePropertyNotes(&Section{SectionHeader: SectionHeader{Name: ".n"}, Data: b}, Class64, order); ok {
 		t.Error("non-property note accepted")
 	}
 	// A non-GNU note followed by a valid property note; the first is skipped.
@@ -859,7 +857,7 @@ func TestConvertCoveragePropertyMalformed(t *testing.T) {
 	order.PutUint32(other[8:], 5)
 	copy(other[12:], "XYZ\x00")
 	b = append(other, cvNote(order, 8, cvPropEntry(order, 8, 0xc0010002, 7))...)
-	props, ok := decodePropertyNotes(&Section{SectionHeader: SectionHeader{Name: ".n"}, Data: b}, Class64, order)
+	props, _, ok := decodePropertyNotes(&Section{SectionHeader: SectionHeader{Name: ".n"}, Data: b}, Class64, order)
 	if !ok || len(props) != 1 || cvPropValues(props, order)[0xc0010002] != 7 {
 		t.Errorf("non-GNU note handling: %+v ok=%v", props, ok)
 	}
@@ -871,24 +869,24 @@ func TestConvertCoveragePropertyMalformed(t *testing.T) {
 	copy(n[12:], "GNU\x00")
 	order.PutUint32(n[16:], 0xc0010002)
 	order.PutUint32(n[20:], 100)
-	if _, ok := decodePropertyNotes(&Section{SectionHeader: SectionHeader{Name: ".n"}, Data: n}, Class64, order); ok {
+	if _, _, ok := decodePropertyNotes(&Section{SectionHeader: SectionHeader{Name: ".n"}, Data: n}, Class64, order); ok {
 		t.Error("malformed property accepted")
 	}
 	// Trailing bytes that are not a complete note.
 	b = cvNote(order, 8, cvPropEntry(order, 8, 0xc0010002, 1))
 	b = append(b, 1, 2, 3)
-	if _, ok := decodePropertyNotes(&Section{SectionHeader: SectionHeader{Name: ".n"}, Data: b}, Class64, order); ok {
+	if _, _, ok := decodePropertyNotes(&Section{SectionHeader: SectionHeader{Name: ".n"}, Data: b}, Class64, order); ok {
 		t.Error("trailing partial note accepted")
 	}
 	// Unknown section alignment falls back to the class default.
 	b = cvNote(order, 8, cvPropEntry(order, 8, 0xc0010002, 2))
 	sec := &Section{SectionHeader: SectionHeader{Name: ".n", Addralign: 3}, Data: b}
-	if _, ok := decodePropertyNotes(sec, Class64, order); !ok {
+	if _, _, ok := decodePropertyNotes(sec, Class64, order); !ok {
 		t.Error("class-default alignment rejected")
 	}
 	b4 := cvNote(order, 4, cvPropEntry(order, 4, 0xc0010002, 2))
 	sec = &Section{SectionHeader: SectionHeader{Name: ".n", Addralign: 0}, Data: b4}
-	if _, ok := decodePropertyNotes(sec, Class32, order); !ok {
+	if _, _, ok := decodePropertyNotes(sec, Class32, order); !ok {
 		t.Error("class-default alignment rejected (32)")
 	}
 }

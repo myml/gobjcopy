@@ -176,9 +176,10 @@ func ConvertClass(f *File, class Class) error {
 			hashes = append(hashes, h)
 		case SHT_NOTE:
 			if strings.HasPrefix(sec.Name, ".note.gnu.property") {
-				props, ok := decodePropertyNotes(sec, from, order)
+				props, notes, ok := decodePropertyNotes(sec, from, order)
 				if ok {
 					propNotes = append(propNotes, savedProperty{sec: sec, props: props})
+					_ = notes
 				}
 			}
 		}
@@ -404,7 +405,7 @@ const (
 // resulting list is what objcopy writes as a single note on class conversion.
 // ok is false when the section is not a well formed property note section, in
 // which case it is left untouched.
-func decodePropertyNotes(sec *Section, class Class, order binary.ByteOrder) ([]gnuProperty, bool) {
+func decodePropertyNotes(sec *Section, class Class, order binary.ByteOrder) ([]gnuProperty, int, bool) {
 	// BFD parses property notes with the class word size, not with the
 	// section's sh_addralign: GNU's x32 conversion keeps sh_addralign 8 while
 	// packing the descriptors on 4-byte boundaries.
@@ -415,40 +416,42 @@ func decodePropertyNotes(sec *Section, class Class, order binary.ByteOrder) ([]g
 	data := sec.Data
 	var props []gnuProperty
 	found := false
+	notes := 0
 	for pos := 0; pos < len(data); {
 		if len(data)-pos < 12 {
-			return nil, false
+			return nil, 0, false
 		}
 		namesz := int(order.Uint32(data[pos:]))
 		descsz := int(order.Uint32(data[pos+4:]))
 		noteType := order.Uint32(data[pos+8:])
 		nameOff := pos + 12
 		if namesz < 0 || namesz > len(data)-nameOff {
-			return nil, false
+			return nil, 0, false
 		}
 		descOff := pos + alignInt(12+namesz, align)
 		if descOff > len(data) || descsz < 0 || descsz > len(data)-descOff {
-			return nil, false
+			return nil, 0, false
 		}
 		if namesz == 4 && noteType == gnuPropertyType0 &&
 			string(data[nameOff:nameOff+4]) == "GNU\x00" {
 			ps, ok := parsePropertyList(data[descOff:descOff+descsz], align, order)
 			if !ok {
-				return nil, false
+				return nil, 0, false
 			}
 			found = true
+			notes++
 			props = mergeProperties(props, ps, order)
 		}
 		next := descOff + alignInt(descsz, align)
 		if next <= pos {
-			return nil, false
+			return nil, 0, false
 		}
 		pos = next
 	}
 	if !found {
-		return nil, false
+		return nil, 0, false
 	}
-	return props, true
+	return props, notes, true
 }
 
 // parsePropertyList decodes the descriptor of one GNU property note.
@@ -552,12 +555,9 @@ func encodePropertyNote(sec *Section, props []gnuProperty, class Class, order bi
 	}
 	sec.Data = buf
 	sec.Size = uint64(len(buf))
-	// BFD preserves sh_addralign across class conversion (an x32 note keeps
-	// the 8-byte alignment it had in the 64-bit input); only the descriptor
-	// layout follows the output class.
-	if sec.Addralign == 0 {
-		sec.Addralign = uint64(outAlign)
-	}
+	// _bfd_elf_convert_gnu_properties always sets the output section
+	// alignment to the output class word when it converts the note.
+	sec.Addralign = uint64(outAlign)
 }
 
 func alignInt(v, a int) int {

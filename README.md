@@ -226,7 +226,12 @@ go test ./... -cover               # 各包自身覆盖率
 12. **`-R` 删掉可重定位文件里被重定位引用的节**：GNU 会以
     `symbol '.debug_info' required but not present` 致命退出；gobjcopy 在
     `elf.RemoveSection` 里已把引用被删符号的重定位一并丢弃，因此能成功输出。
-13. **手工构造的 x86 可执行文件做无操作复制**：如果输入里带未使用的 section
+13. **GNU property note 的 `sh_addralign`**：BFD 的类转换代码
+    （`_bfd_elf_convert_gnu_properties`）总是把输出节对齐设成目标 class 字长
+    （x32 为 4），但实测 GNU objcopy 对某些编译器生成的单个 note 会保留输入的 8；
+    这个行为在 GNU 内部并不一致。gobjcopy 统一按 class 字长写（与 BFD 源码和
+    官方 pr23494 用例一致），note 内容与大小完全一致，只有 `sh_addralign` 可能差 4。
+14. **手工构造的 x86 可执行文件做无操作复制**：如果输入里带未使用的 section
     符号，GNU 会重写文件并丢弃它们；gobjcopy 的“无变化就逐字节复制”捷径会原样
     保留。官方 `objcopy.exp` 的 `cmp` 用例不受影响（ld 生成的可执行文件没有这类
     符号）。
