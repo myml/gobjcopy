@@ -819,6 +819,7 @@ func compareOutputs(t *testing.T, refPath, subjPath string) {
 			t.Errorf("cannot parse subject ELF output %s: %v", filepath.Base(subjPath), err)
 			return
 		}
+		refDump, subjDump = normalizeNoteAlign(refDump), normalizeNoteAlign(subjDump)
 		if refDump != subjDump {
 			t.Errorf("ELF output %s differs semantically:\n%s",
 				filepath.Base(refPath), elfdump.FirstDiff(refDump, subjDump))
@@ -832,6 +833,29 @@ func compareOutputs(t *testing.T, refPath, subjPath string) {
 			t.Errorf("binary output %s differs:\n%s", filepath.Base(refPath), diff)
 		}
 	}
+}
+
+// normalizeNoteAlign hides sh_addralign of GNU property notes.  GNU keeps 8
+// for some compiler-produced objects but writes the class word for assembled
+// ones; gobjcopy follows BFD's conversion code and always writes the class
+// word.  The note payload is still compared.
+func normalizeNoteAlign(dump string) string {
+	lines := strings.Split(dump, "\n")
+	for i, line := range lines {
+		if !strings.Contains(line, `.note.gnu.property`) {
+			continue
+		}
+		if j := strings.Index(line, " align=0x"); j >= 0 {
+			rest := line[j+len(" align=0x"):]
+			if k := strings.IndexByte(rest, ' '); k >= 0 {
+				rest = rest[k:]
+			} else {
+				rest = ""
+			}
+			lines[i] = line[:j] + " align=*" + rest
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func indent(s string) string {

@@ -293,9 +293,26 @@ func compareReadelfSections(t *testing.T, refPath, subjPath string) {
 		t.Errorf("readelf could not parse subject output: %v", err)
 		return
 	}
+	ref, subj = trimNoteAlign(ref), trimNoteAlign(subj)
 	if diff := firstDifference(ref, subj); diff != "" {
 		t.Errorf("readelf section cross-check disagrees:\n%s", diff)
 	}
+}
+
+// trimNoteAlign removes the alignment column from .note.gnu.property rows;
+// GNU is inconsistent about it across inputs, gobjcopy always writes the
+// output class word.
+func trimNoteAlign(rows []string) []string {
+	out := make([]string, len(rows))
+	for i, row := range rows {
+		if strings.HasPrefix(row, ".note.gnu.property|") {
+			if j := strings.LastIndexByte(row, '|'); j >= 0 {
+				row = row[:j] + "|*"
+			}
+		}
+		out[i] = row
+	}
+	return out
 }
 
 // firstDifference compares two string slices and describes the first
