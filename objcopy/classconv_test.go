@@ -207,6 +207,18 @@ func ignoreClassWidths(s *convSnapshot) {
 	}
 }
 
+// ignoreNoteAlign drops the sh_addralign of GNU property notes.  GNU is
+// inconsistent here (compiler-produced objects keep 8, assembled ones get the
+// class word), so only the note payload is compared.
+func ignoreNoteAlign(s *convSnapshot) {
+	for i := range s.Sections {
+		sec := &s.Sections[i]
+		if sec.Type == elf.SHT_NOTE && sec.Name == ".note.gnu.property" {
+			sec.Addralign = 0
+		}
+	}
+}
+
 // ignoreNoteLayouts drops the layout of GNU property notes.  Their size and
 // internal alignment legitimately follow the class word (x32 packs the
 // descriptors on 4-byte boundaries), and whether the host compiler emits one
@@ -418,6 +430,8 @@ func TestClassConvertGNUParity(t *testing.T) {
 	got := takeSnapshot(t, ourFile)
 	ignoreClassWidths(&want)
 	ignoreClassWidths(&got)
+	ignoreNoteAlign(&want)
+	ignoreNoteAlign(&got)
 	compareSnapshots(t, want, got)
 }
 
